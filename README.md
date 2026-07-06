@@ -13,3 +13,7 @@ Whether your system's ffmpeg (ffmpeg) or own ffmpeg binary (.../path/to/ffmpeg) 
 The program does this by creating separate subprocesses for input and output nodes, and have input stream written to the output.
 
 This effectively has 2 FFMPEG running, 1 for specifically capturing audio and 1 for specifically outputting to an audio device.
+
+This program makes sure that the input and output are separate nodes to pipewire, while internally they are one stream to the other.
+
+While in **pipewire**, you can just hook it up with **qpwgraph** (or similar), in **pw-top** it gets merged with **literally all other devices** which for me **causes huge audio desync, crackles, stutters.** im prolly doing something wrong with the pipewire configs... oh well whatever.
