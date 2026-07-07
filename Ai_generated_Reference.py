@@ -8,6 +8,8 @@ target_output_device = "Soundboard_Device" # Replace with your target sink name
 # 1. Setup the Capture Process (Input)
 input_command = [
     "ffmpeg",
+    "-threads", "1",                  # Rule 2: Limit to a single thread
+    "-thread_queue_size", "16",      # Rule 1: Shrink input buffer queue size
     "-f", "pulse",
     "-stream_name", f"IN_PypeMeeter-{target_input_device}",
     "-i", target_input_device,
@@ -19,20 +21,22 @@ input_command = [
 # 2. Setup the Playback Process (Output)
 output_command = [
     "ffmpeg",
-    "-fflags", "nobuffer",       # Disable internal FFmpeg buffering
+    "-threads", "1",               # Force single-threading
+    "-fflags", "nobuffer",         # Disable input buffering
+    "-thread_queue_size", "16",    # Strictly limit the input pipe RAM buffer
     "-f", "s16le", 
     "-ac", "2", 
     "-ar", "48000",
-    "-i", "pipe:0",              # Read raw PCM from your script
-    "-f", "pulse",
-    "-buffer_duration", "2000",  # Request a 2ms buffer size from PulseAudio
-    f"-device", target_output_device,         # e.g., "alsa_output.pci-0000_00_1f.3.analog-stereo"
+    "-i", "pipe:0",                 # Read raw PCM from stdin
+    "-f", "pulse",                  # Output muxer format
+    "-buffer_duration", "2",        # 2ms hardware buffer duration (low latency/RAM)
+    "-device", target_output_device, # The actual output device/sink destination
     f"OUT_PypeMeeter-{target_output_device}"
 ]
 # Spin them both up
+# try to use "with:" statement
 input_proc = subprocess.Popen(input_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 output_proc = subprocess.Popen(output_command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
 print("Audio pipeline linked. Processing data...")
 time.sleep(0.5) # Allow initialization
 # def getRMS(data):
