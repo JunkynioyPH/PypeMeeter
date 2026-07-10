@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt, QTimer, QObject
 import os, atexit, subprocess, rich, time
 def ffmpegCaptureCommand(name:str, inDevices:list, channels:int=2, ffmpegPath:str|None=None) -> list:
-    ffmpegBinary = "ffmpeg" if ffmpegPath is None else ffmpegPath
+    ffmpegBinary = "ffmpeg" if ffmpegPath is None else os.path.join(ffmpegPath)
     inputs = []
     for each in inDevices:
         inputs.extend(["-f", 'pulse', '-stream_name', f"PypeMeeter-Capture_{name}", '-i', each])
