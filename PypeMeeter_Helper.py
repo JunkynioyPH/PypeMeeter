@@ -26,7 +26,6 @@ class updateTimerQueue(QTimer):
     def popQueueItem(self, index:int):
         self.updateList.pop(index)
 class PypeInletPort():
-    # {'deviceName':channelCountInteger}
     def __init__(self, name:str, inputDevices:list[str], ffmpeg:BinaryType|str=BinaryType.SYSTEM):
         """
         Args:
@@ -39,14 +38,36 @@ class PypeInletPort():
         self.ffmpegBinary:BinaryType|str = ffmpeg
         self.process:subprocess.Popen|None = None
         atexit.register(self._exit)
-    def _captureCommand_old(self) -> list:
+    # Im probably doing something wrong with ehese ffmpeg commands
+    # sooo i kept both
+    def _command(self, alsa=False):
+        ffmpegBinary = "ffmpeg" if self.ffmpegBinary is BinaryType.SYSTEM else self.ffmpegBinary
+        inputs = []
+        for device in self.devices:
+            # inputs.extend(["-f", 'pulse', '-i', device])
+            inputs.extend(["-f", 'pulse', "-fragment_size", "100", '-stream_name', f"PypeMeeter-Inlet_{self.name}", '-i', device])
+        input_command = [
+            ffmpegBinary,
+            '-re', *inputs,
+            "-filter_complex", f"amix=inputs={len(self.devices)}:dropout_transition=0",
+            "-f", "s16le", "-ac", '2', "-ar", "48000",
+            "-fflags", "nobuffer+igndts", "-avioflags", "direct",
+            "-fflags", "fastseek", "-flush_packets", "1", 
+            "pipe:1"
+        ] if not alsa else [
+            ... ## TODO
+        ]
+        print(input_command)
+        return input_command
+    def _command_old(self) -> list:
+        rich.print(f'[PypeMeeter] {self} [yellow]Using Old Inlet Command.')
         ffmpegBinary = "ffmpeg" if self.ffmpegBinary is BinaryType.SYSTEM else self.ffmpegBinary
         inputs = []
         for device in self.devices:
             inputs.extend(["-f", 'pulse', '-stream_name', f"PypeMeeter-Inlet_{self.name}", '-i', device])
         input_command = [
         ffmpegBinary,
-        "-threads", "1",
+        # "-threads", "1",
         '-re', *inputs, 
         "-filter_complex", f"amix=inputs={len(self.devices)}:dropout_transition=0",
         "-fflags", "nobuffer+igndts", "-avioflags", "direct",
@@ -54,10 +75,10 @@ class PypeInletPort():
         "-flush_packets", "1",
         "pipe:1"]  # Write to stdout
         return input_command
-    def start(self, oldCommand=False, ffmpegVerbose=False) -> None:
+    def start(self, alsa=False, oldCommand=False, ffmpegVerbose=False) -> None:
         #NOTE: new command stub
         rich.print(f'[PypeMeeter] [green]Spawned:[/green] {self}')
-        command = self._captureCommand_old() if oldCommand else print('NEW COMMAND SOON')
+        command = self._command_old() if oldCommand else self._command(alsa)
         verbose = None if ffmpegVerbose else subprocess.DEVNULL
         self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=verbose)
     def getData(self, buffer:int=128, channels:int=2) -> bytes:
@@ -84,24 +105,34 @@ class PypeOutletPort():
         self.ffmpegBinary:BinaryType|str = ffmpeg
         self.process:subprocess.Popen|None = None
         atexit.register(self._exit)
-    def _playbackCommand_old(self) -> list:
+    # Im probably doing something wrong with ehese ffmpeg commands
+    # sooo i kept both
+    def _command(self, alsa=False):
+        ffmpegBinary = "ffmpeg" if self.ffmpegBinary is BinaryType.SYSTEM else self.ffmpegBinary
+        output_command = [ffmpegBinary, #'-threads', '1',
+                          "-fflags", "nobuffer+igndts", "-flush_packets", "1",
+                          "-f", "s16le", "-ar", '48000', '-ac', '2', '-i', 'pipe:0',
+                          "-f", "pulse", "-device", self.device,
+                          "-buffer_size", '512', "-fragment_size", "100",
+                          f"PypeMeeter-Outlet{self.name}"] if not alsa else [
+                              ... ## TODO
+                          ]
+        return output_command
+    def _command_old(self) -> list:
+        rich.print(f'[PypeMeeter] {self} [yellow]Using Old Outlet Command.')
         ffmpegBinary = "ffmpeg" if self.ffmpegBinary is BinaryType.SYSTEM else self.ffmpegBinary
         output_command = [
             ffmpegBinary,
-            "-threads", "1",
-            "-fflags", "nobuffer",
-            "-f", "s16le", 
-            "-ac", '2', 
-            "-ar", "48000",
-            "-i", "pipe:0",
-            "-f", "pulse",
-            "-device", self.device,
+            #"-threads", "1",
+            "-fflags", "nobuffer+igndts",
+            "-f", "s16le", "-ac", '2', "-ar", "48000", "-i", "pipe:0",
+            "-f", "pulse", "-device", self.device,
             f"PypeMeeter-Outlet{self.name}"]
         return output_command
-    def start(self, oldCommand=False, ffmpegVerbose=False):
+    def start(self, alsa=False, oldCommand=False, ffmpegVerbose=False):
         #NOTE: new command stub
         rich.print(f'[PypeMeeter] [green]Spawned:[/green] {self}')
-        command = self._playbackCommand_old() if oldCommand else print('NEW COMMAND SOON')
+        command = self._command_old() if oldCommand else self._command(alsa)
         verbose = None if ffmpegVerbose else subprocess.DEVNULL
         self.process:subprocess.Popen|None = subprocess.Popen(command, bufsize=0, stdin=subprocess.PIPE, stderr=verbose)
     def sendData(self, data:bytes):
@@ -112,18 +143,38 @@ class PypeOutletPort():
         rich.print(f'[PypeMeeter] [red]Terminated:[/red] {self}')
     def __repr__(self):
         return f'<PypeOutletPort({self.name}) >> {self.device}>'
-        
+
+# test the implementation.
 if __name__ == "__main__":
     devices = [
         'Soundboard_Playback.monitor',
         'alsa_input.pci-0000_2f_00.4.analog-stereo'
     ]
-    pipeIN = PypeInletPort('MicMerge', devices)
-    pipeOUT = PypeOutletPort('MicMerge', 'Unified_Microphone')
-    pipeIN.start(True)
-    pipeOUT.start(True)
+    # it's a bit weird but i cant get this ffmpeg binary to recognise "-f pulse" or any of the current flags...
+    ffmpeg = BinaryType.SYSTEM #'/media/160gbBag/g. software stuff/FFMPEG-8-Linux/ffmpeg'
+    pipeIN = PypeInletPort('MicMerge', devices, ffmpeg=ffmpeg)
+    pipeOUT = PypeOutletPort('MicMerge', 'Unified_Microphone', ffmpeg=ffmpeg)
+    pipeMonitor = PypeOutletPort('MicMergeMonitor', "alsa_output.usb-HP__Inc_HyperX_Cloud_Alpha_S_000000000001-00.analog-surround-71", ffmpeg=ffmpeg)
+    pipeIN.start()
+    pipeOUT.start()
+    pipeMonitor.start()
+    
     time.sleep(0.5)
-    while True:
-        pipeOUT.sendData(pipeIN.getData(4))
-        # os.system('clear')
-        # print(pipeIN, pipeOUT)
+    try:
+        while True:
+            # only .getData(x) once please, or else it dies when it gets
+            # eevery time for new device
+            data = pipeIN.getData(4)
+            
+            pipeOUT.sendData(data)
+            pipeMonitor.sendData(data)
+            
+            # os.system('clear')
+            # print(pipeIN, pipeOUT)
+    except KeyboardInterrupt:
+        rich.print('KEYBOARD INTERRUPT!\nExcept START')
+        pipeIN._exit()
+        pipeOUT._exit()
+        pipeMonitor._exit()
+        rich.print('Except END')
+        
