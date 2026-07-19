@@ -38,10 +38,14 @@ class PypeInlet(QProcess):
         if OS_NT is False:
             # Construct the arguments for Linux
             ## 19.07.2026 @ 2:55 AM == Alsa part of this is not tested.
+            ### https://ffmpeg.org/ffmpeg-formats.html#Format-stream-specifiers-1
+            ### It helps if you actually read the docs :skull:
             for device in devices:
                 rich.print(f'[PypeMeeter] PypeInlet({name}): Constructing Args for [magenta]({devices.get(device)}):<{device}>[/magenta]', end=' ')
-                commandArgs:list = [
-                    '-re', '-f', str(devices.get(device).value), '-ac', '2', '-ar', '48000',
+                commandArgs:list = ['-re', 
+                    '-probesize', '32', '-f', str(devices.get(device).value), '-ac', '2', '-ar', '48000',
+                    '-fflags', '+fastseek+igndts+nobuffer+nofillin',
+                    "-avioflags", "direct", '-analyzeduration', '0',
                     '-fragment_size', '100', '-stream_name', f"PypeMeeter-Inlet_{name}",
                     '-i', str(device)
                     ]
@@ -62,15 +66,20 @@ class PypeInlet(QProcess):
         
         # if needed, amix=inputs=X:duration= shortest | longest
         self.command = [
+            # input flags device from devices
             *self.inputStreams,
-            "-filter_complex", f"amix=inputs={len(devices)}:dropout_transition=0,aresample=async=1",
+            
+            # mixer flags for mixing multiple input devices
+            "-filter_complex", f"amix=inputs={len(devices)}:duration=shortest:dropout_transition=0,aresample=async=1",
+            
+            # output related flags to pipe
             "-f", "s16le", "-ac", '2', "-ar", "48000",
-            "-fflags", "fastseek", "-flush_packets", "1", 
-            "-fflags", "+nobuffer+igndts", "-avioflags", "direct",
+            "-fflags", "+fastseek+nobuffer+igndts+noparse+nofillin+flush_packets", "-flush_packets", "1", 
+            "-avioflags", "direct",
             "pipe:1"
         ]
         self.setArguments(self.command)
-        rich.print(self.command)
+        # rich.print(self.command)
     def stopPype(self):
         self.terminate()
         rich.print(f"[PypeMeeter] Terminated {self}")
@@ -82,15 +91,20 @@ class PypeOutlet(QProcess):
         super().__init__(parent)
         self.setProgram('ffmpeg' if ffmpeg == BinaryType.SYSTEM else os.path.join(str(ffmpeg)))
         self.name, self.device = name, device
-        self.command = [#'-threads', '2',
-                          "-flush_packets", "1",
-                          "-f", "s16le", "-ar", '48000', '-ac', '2', 
-                          "-fflags", "+nobuffer+igndts", 
-                          '-i', 'pipe:0',
-                          "-f", "pulse", "-device", device,
-                          "-buffer_size", '512', "-fragment_size", "100",
-                        #   '-af','asubboost=boost=12',
-                          f"PypeMeeter-Outlet{name}"]
+        self.command = [#'-threads', '2', s16le
+                        # input related flags from pipe:0
+                        "-f", "s16le", "-ar", '48000', '-ac', '2', 
+                        "-fflags", "+fastseek+nobuffer+igndts+nofillin",
+                        '-avioflags', 'direct',
+                        '-i', 'pipe:0',
+                        
+                        # output related flags to device
+                        "-f", "pulse", "-device", device,
+                        '-fflags', '+nobuffer+fastseek+igndts+noparse+nofillin+flush_packets',
+                        "-flush_packets", "1",
+                        "-buffer_size", '512', "-fragment_size", "100",
+                        # '-af','asubboost=boost=12',
+                        f"PypeMeeter-Outlet{name}"]
         self.setArguments(self.command)
     def stopPype(self):
         self.terminate()
@@ -113,9 +127,13 @@ if __name__ == '__main__':
     outletTest = PypeOutlet('PypeTest', "alsa_output.usb-HP__Inc_HyperX_Cloud_Alpha_S_000000000001-00.analog-surround-71")
     inletTest.setStandardOutputProcess(outletTest)
     
-    inletTest.readyReadStandardError.connect(lambda: os.system('clear'))
-    inletTest.readyReadStandardError.connect(lambda: rich.print("\n[green]INLET INFO:", bytes(inletTest.readAllStandardError()).decode()))
-    outletTest.readyReadStandardError.connect(lambda: rich.print("[red]OUTLET INFO:", bytes(outletTest.readAllStandardError()).decode()))
+    #### THIS FOR SOME REASON BLOCKS THE WHOLE THING, 
+    #### BUT AUDIO STREAMS WORK WHEN COMMENTED OUT SO I WONT COMPLAIN
+    #### This started when i started to add more -fflag args from both in/out commands
+    ##
+    # inletTest.readyReadStandardError.connect(lambda: os.system('clear'))
+    # inletTest.readyReadStandardError.connect(lambda: rich.print("[green] INLET INFO:", bytes(inletTest.readAllStandardError()).decode()))
+    # outletTest.readyReadStandardError.connect(lambda: rich.print("[red]OUTLET INFO:", bytes(outletTest.readAllStandardError()).decode()))
     
     
     outletTest.start()
